@@ -8,6 +8,7 @@ using Vortice.D3DCompiler;
 using Vortice.Direct3D;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
+using Vortice.Mathematics;
 
 namespace D3DWinUI3
 {
@@ -26,7 +27,10 @@ namespace D3DWinUI3
         private ID3D11PixelShader pixelShader;
         private ID3D11Buffer vertexBuffer;
         private ID3D11Buffer indexBuffer;
+        private ID3D11InputLayout inputLayout;
 
+        private Viewport viewport;
+        private Color4 canvasColor;
         private int stride = sizeof(float) * 3;
         private int offset = 0;
 
@@ -49,6 +53,8 @@ namespace D3DWinUI3
 
         public void InitializeDirectX()
         {
+            canvasColor = new Color4(1.0f, 1.0f, 1.0f, 1.0f);
+
             FeatureLevel[] featureLevels = new FeatureLevel[]
             {
                 FeatureLevel.Level_12_1,
@@ -65,13 +71,7 @@ namespace D3DWinUI3
             ID3D11Device tempDevice;
             ID3D11DeviceContext tempContext;
 
-            D3D11.D3D11CreateDevice(
-                null,
-                DriverType.Hardware,
-                DeviceCreationFlags.BgraSupport | DeviceCreationFlags.Debug,
-                featureLevels,
-                out tempDevice,
-                out tempContext).CheckError();
+            D3D11.D3D11CreateDevice(null, DriverType.Hardware, DeviceCreationFlags.BgraSupport | DeviceCreationFlags.Debug, featureLevels, out tempDevice, out tempContext).CheckError();
             device = tempDevice;
             deviceContext = tempContext;
             dxgiDevice = device.QueryInterface<IDXGIDevice>();
@@ -106,6 +106,16 @@ namespace D3DWinUI3
             renderTargetView = device.CreateRenderTargetView(backBuffer);
             IDXGISurface dxgiSurface = backBuffer.QueryInterface<IDXGISurface>();
             swapChainPanel.SetSwapChain(swapChain);
+
+            viewport = new Viewport
+            {
+                X = 0.0f,
+                Y = 0.0f,
+                Width = (float)SwapChainCanvas.Width,
+                Height = (float)SwapChainCanvas.Height,
+                MinDepth = 0.0f,
+                MaxDepth = 1.0f
+            };
         }
 
         public void CreateResources()
@@ -154,22 +164,38 @@ namespace D3DWinUI3
             };
             using DataStream dsIndex = DataStream.Create(indices, true, true);
             indexBuffer = device.CreateBuffer(indexBufferDesc, dsIndex);
+
+            InputElementDescription[] inputElements = new InputElementDescription[]
+            {
+                new InputElementDescription("POSITION", 0, Format.R32G32B32_Float, 0, 0),
+            };
+            inputLayout = device.CreateInputLayout(inputElements, vertexShaderByteCode.Span);
         }
 
         public void SetRenderState()
         {
             deviceContext.VSSetShader(vertexShader, null, 0);
             deviceContext.PSSetShader(pixelShader, null, 0);
-            deviceContext.IASetVertexBuffers(
-                0,
-                new[] { vertexBuffer },
-                new[] { stride },
-                new[] { offset });
+
+            deviceContext.IASetVertexBuffers(0, new[] { vertexBuffer }, new[] { stride }, new[] { offset });
             deviceContext.IASetIndexBuffer(indexBuffer, Format.R32_UInt, 0);
+            deviceContext.IASetInputLayout(inputLayout);
+            deviceContext.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
+
+            deviceContext.RSSetViewports(new Viewport[] { viewport });
         }
 
         private void Timer_Tick(object sender, object e)
         {
+            Draw();
+        }
+
+        private void Draw()
+        {
+            deviceContext.OMSetRenderTargets(renderTargetView);
+            deviceContext.ClearRenderTargetView(renderTargetView, canvasColor);
+            deviceContext.DrawIndexed(3, 0, 0);
+            swapChain.Present(1, PresentFlags.None);
         }
     }
 }
