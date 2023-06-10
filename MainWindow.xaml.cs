@@ -1,4 +1,6 @@
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using SharpGen.Runtime;
 using System;
 using Vortice.Direct3D;
 using Vortice.Direct3D11;
@@ -14,6 +16,9 @@ namespace D3DWinUI3
         private ID3D11DeviceContext deviceContext;
         private IDXGIDevice dxgiDevice;
         private IDXGISwapChain1 swapChain;
+        private ID3D11Texture2D backBuffer;
+        private ID3D11RenderTargetView renderTargetView;
+        private Vortice.WinUI.ISwapChainPanelNative swapChainPanel;
 
         public MainWindow()
         {
@@ -21,6 +26,12 @@ namespace D3DWinUI3
             timer = new DispatcherTimer();
             timer.Tick += Timer_Tick;
             timer.Interval = TimeSpan.FromMilliseconds(1000 / 60);
+        }
+
+        private void SwapChainCanvas_Loaded(object sender, RoutedEventArgs e)
+        {
+            CreateSwapChain();
+            timer.Start();
         }
 
         public void InitializeDirectX()
@@ -55,6 +66,10 @@ namespace D3DWinUI3
 
         public void CreateSwapChain()
         {
+            ComObject comObject = new ComObject(SwapChainCanvas);
+            swapChainPanel = comObject.QueryInterfaceOrNull<Vortice.WinUI.ISwapChainPanelNative>();
+            comObject.Dispose();
+
             SwapChainDescription1 swapChainDesc = new SwapChainDescription1()
             {
                 Stereo = false,
@@ -73,6 +88,11 @@ namespace D3DWinUI3
             IDXGIAdapter1 dxgiAdapter = dxgiDevice.GetParent<IDXGIAdapter1>();
             IDXGIFactory2 dxgiFactory2 = dxgiAdapter.GetParent<IDXGIFactory2>();
             swapChain = dxgiFactory2.CreateSwapChainForComposition(device, swapChainDesc, null);
+
+            backBuffer = swapChain.GetBuffer<ID3D11Texture2D>(0);
+            renderTargetView = device.CreateRenderTargetView(backBuffer);
+            IDXGISurface dxgiSurface = backBuffer.QueryInterface<IDXGISurface>();
+            swapChainPanel.SetSwapChain(swapChain);
         }
 
         private void Timer_Tick(object sender, object e)
