@@ -1,5 +1,4 @@
 using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Controls;
 using SharpGen.Runtime;
 using System;
 using System.IO;
@@ -7,6 +6,7 @@ using Vortice;
 using Vortice.D3DCompiler;
 using Vortice.Direct3D;
 using Vortice.Direct3D11;
+using Vortice.Direct3D11.Debug;
 using Vortice.DXGI;
 using Vortice.Mathematics;
 
@@ -28,6 +28,7 @@ namespace D3DWinUI3
         private ID3D11Buffer vertexBuffer;
         private ID3D11Buffer indexBuffer;
         private ID3D11InputLayout inputLayout;
+        private ID3D11Debug iD3D11Debug;
 
         private Viewport viewport;
         private Color4 canvasColor;
@@ -41,6 +42,26 @@ namespace D3DWinUI3
             timer.Tick += Timer_Tick;
             timer.Interval = TimeSpan.FromMilliseconds(1000 / 60);
             InitializeDirectX();
+        }
+
+        private void Window_Closed(object sender, WindowEventArgs args)
+        {
+            deviceContext.ClearState();
+            deviceContext.Flush();
+
+            device.Dispose();
+            deviceContext.Dispose();
+            swapChain.Dispose();
+            backBuffer.Dispose();
+            renderTargetView.Dispose();
+            vertexShader.Dispose();
+            pixelShader.Dispose();
+            vertexBuffer.Dispose();
+            indexBuffer.Dispose();
+            swapChainPanel.Dispose();
+
+            // iD3D11Debug.ReportLiveDeviceObjects(ReportLiveDeviceObjectFlags.Detail | ReportLiveDeviceObjectFlags.IgnoreInternal);
+            iD3D11Debug.Dispose();
         }
 
         private void SwapChainCanvas_Loaded(object sender, RoutedEventArgs e)
@@ -70,10 +91,16 @@ namespace D3DWinUI3
 
             ID3D11Device tempDevice;
             ID3D11DeviceContext tempContext;
+            DeviceCreationFlags deviceCreationFlags = DeviceCreationFlags.BgraSupport;
 
-            D3D11.D3D11CreateDevice(null, DriverType.Hardware, DeviceCreationFlags.BgraSupport | DeviceCreationFlags.Debug, featureLevels, out tempDevice, out tempContext).CheckError();
+#if DEBUG
+            deviceCreationFlags |= DeviceCreationFlags.Debug;
+#endif
+
+            D3D11.D3D11CreateDevice(null, DriverType.Hardware, deviceCreationFlags, featureLevels, out tempDevice, out tempContext).CheckError();
             device = tempDevice;
             deviceContext = tempContext;
+            iD3D11Debug = device.QueryInterfaceOrNull<ID3D11Debug>();
             dxgiDevice = device.QueryInterface<IDXGIDevice>();
         }
 
@@ -101,11 +128,15 @@ namespace D3DWinUI3
             IDXGIAdapter1 dxgiAdapter = dxgiDevice.GetParent<IDXGIAdapter1>();
             IDXGIFactory2 dxgiFactory2 = dxgiAdapter.GetParent<IDXGIFactory2>();
             swapChain = dxgiFactory2.CreateSwapChainForComposition(device, swapChainDesc, null);
+            dxgiAdapter.Dispose();
+            dxgiFactory2.Dispose();
+            dxgiDevice.Dispose();
 
             backBuffer = swapChain.GetBuffer<ID3D11Texture2D>(0);
             renderTargetView = device.CreateRenderTargetView(backBuffer);
             IDXGISurface dxgiSurface = backBuffer.QueryInterface<IDXGISurface>();
             swapChainPanel.SetSwapChain(swapChain);
+            dxgiSurface.Dispose();
 
             viewport = new Viewport
             {
@@ -180,6 +211,7 @@ namespace D3DWinUI3
             deviceContext.IASetVertexBuffers(0, new[] { vertexBuffer }, new[] { stride }, new[] { offset });
             deviceContext.IASetIndexBuffer(indexBuffer, Format.R32_UInt, 0);
             deviceContext.IASetInputLayout(inputLayout);
+            inputLayout.Dispose();
             deviceContext.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
 
             deviceContext.RSSetViewports(new Viewport[] { viewport });
