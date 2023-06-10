@@ -1,0 +1,11 @@
+{
+  "profiles": {
+    "D3DWinUI3 (Package)": {
+      "commandName": "MsixPackage",
+      "nativeDebugging": true
+    },
+    "D3DWinUI3 (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}
