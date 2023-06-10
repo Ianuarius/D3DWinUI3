@@ -2,6 +2,9 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using SharpGen.Runtime;
 using System;
+using System.IO;
+using Vortice;
+using Vortice.D3DCompiler;
 using Vortice.Direct3D;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
@@ -19,6 +22,13 @@ namespace D3DWinUI3
         private ID3D11Texture2D backBuffer;
         private ID3D11RenderTargetView renderTargetView;
         private Vortice.WinUI.ISwapChainPanelNative swapChainPanel;
+        private ID3D11VertexShader vertexShader;
+        private ID3D11PixelShader pixelShader;
+        private ID3D11Buffer vertexBuffer;
+        private ID3D11Buffer indexBuffer;
+
+        private int stride = sizeof(float) * 3;
+        private int offset = 0;
 
         public MainWindow()
         {
@@ -32,6 +42,8 @@ namespace D3DWinUI3
         private void SwapChainCanvas_Loaded(object sender, RoutedEventArgs e)
         {
             CreateSwapChain();
+            CreateResources();
+            SetRenderState();
             timer.Start();
         }
 
@@ -94,6 +106,66 @@ namespace D3DWinUI3
             renderTargetView = device.CreateRenderTargetView(backBuffer);
             IDXGISurface dxgiSurface = backBuffer.QueryInterface<IDXGISurface>();
             swapChainPanel.SetSwapChain(swapChain);
+        }
+
+        public void CreateResources()
+        {
+            string shaderFile = Path.Combine(AppContext.BaseDirectory, "Shader.hlsl");
+
+            var vertexEntryPoint = "VS";
+            var vertexProfile = "vs_5_0";
+            ReadOnlyMemory<byte> vertexShaderByteCode = Compiler.CompileFromFile(shaderFile, vertexEntryPoint, vertexProfile);
+
+            var pixelEntryPoint = "PS";
+            var pixelProfile = "ps_5_0";
+            ReadOnlyMemory<byte> pixelShaderByteCode = Compiler.CompileFromFile(shaderFile, pixelEntryPoint, pixelProfile);
+
+            vertexShader = device.CreateVertexShader(vertexShaderByteCode.Span);
+            pixelShader = device.CreatePixelShader(pixelShaderByteCode.Span);
+
+            float[] vertices = new float[]
+            {
+                0f, 0.5f, 0f, // Top-center
+                0.5f, -0.5f, 0f, // Bottom-right
+                -0.5f, -0.5f, 0f, // Bottom-left
+            };
+
+            BufferDescription vertexBufferDesc = new BufferDescription()
+            {
+                Usage = ResourceUsage.Default,
+                ByteWidth = sizeof(float) * 3 * vertices.Length,
+                BindFlags = BindFlags.VertexBuffer,
+                CPUAccessFlags = CpuAccessFlags.None
+            };
+            using DataStream dsVertex = DataStream.Create(vertices, true, true);
+            vertexBuffer = device.CreateBuffer(vertexBufferDesc, dsVertex);
+
+            int[] indices = new int[]
+            {
+                0, 1, 2,
+            };
+
+            BufferDescription indexBufferDesc = new BufferDescription
+            {
+                Usage = ResourceUsage.Default,
+                ByteWidth = sizeof(uint) * indices.Length,
+                BindFlags = BindFlags.IndexBuffer,
+                CPUAccessFlags = CpuAccessFlags.None,
+            };
+            using DataStream dsIndex = DataStream.Create(indices, true, true);
+            indexBuffer = device.CreateBuffer(indexBufferDesc, dsIndex);
+        }
+
+        public void SetRenderState()
+        {
+            deviceContext.VSSetShader(vertexShader, null, 0);
+            deviceContext.PSSetShader(pixelShader, null, 0);
+            deviceContext.IASetVertexBuffers(
+                0,
+                new[] { vertexBuffer },
+                new[] { stride },
+                new[] { offset });
+            deviceContext.IASetIndexBuffer(indexBuffer, Format.R32_UInt, 0);
         }
 
         private void Timer_Tick(object sender, object e)
