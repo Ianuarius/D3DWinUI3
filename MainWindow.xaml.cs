@@ -26,6 +26,7 @@ namespace D3DWinUI3
             timer = new DispatcherTimer();
             timer.Tick += Timer_Tick;
             timer.Interval = TimeSpan.FromMilliseconds(1000 / 60);
+            InitializeDirectX();
         }
 
         private void SwapChainCanvas_Loaded(object sender, RoutedEventArgs e)
