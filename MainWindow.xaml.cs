@@ -1,7 +1,12 @@
+using Assimp;
 using Microsoft.UI.Xaml;
 using SharpGen.Runtime;
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Numerics;
+using System.Runtime.InteropServices;
 using Vortice;
 using Vortice.D3DCompiler;
 using Vortice.Direct3D;
@@ -29,11 +34,20 @@ namespace D3DWinUI3
         private ID3D11Buffer indexBuffer;
         private ID3D11InputLayout inputLayout;
         private ID3D11Debug iD3D11Debug;
+        private AssimpContext importer;
 
         private Viewport viewport;
         private Color4 canvasColor;
-        private int stride = sizeof(float) * 3;
-        private int offset = 0;
+        private List<Vertex> vertices;
+        private List<uint> indices;
+        private int stride;
+        private int offset;
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct Vertex
+        {
+            public Vector3 Position;
+        }
 
         public MainWindow()
         {
@@ -41,6 +55,11 @@ namespace D3DWinUI3
             timer = new DispatcherTimer();
             timer.Tick += Timer_Tick;
             timer.Interval = TimeSpan.FromMilliseconds(1000 / 60);
+            unsafe
+            {
+                stride = sizeof(Vertex);
+                offset = 0;
+            }
             InitializeDirectX();
         }
 
@@ -59,6 +78,7 @@ namespace D3DWinUI3
             vertexBuffer.Dispose();
             indexBuffer.Dispose();
             swapChainPanel.Dispose();
+            importer.Dispose();
 
             // iD3D11Debug.ReportLiveDeviceObjects(ReportLiveDeviceObjectFlags.Detail | ReportLiveDeviceObjectFlags.IgnoreInternal);
             iD3D11Debug.Dispose();
@@ -151,6 +171,10 @@ namespace D3DWinUI3
 
         public void CreateResources()
         {
+            importer = new AssimpContext();
+            string modelFile = Path.Combine(AppContext.BaseDirectory, "Monkey.fbx");
+            Scene model = importer.ImportFile(modelFile, PostProcessPreset.TargetRealTimeMaximumQuality);
+
             string shaderFile = Path.Combine(AppContext.BaseDirectory, "Shader.hlsl");
 
             var vertexEntryPoint = "VS";
@@ -164,36 +188,46 @@ namespace D3DWinUI3
             vertexShader = device.CreateVertexShader(vertexShaderByteCode.Span);
             pixelShader = device.CreatePixelShader(pixelShaderByteCode.Span);
 
-            float[] vertices = new float[]
-            {
-                0f, 0.5f, 0f, // Top-center
-                0.5f, -0.5f, 0f, // Bottom-right
-                -0.5f, -0.5f, 0f, // Bottom-left
-            };
 
+            Mesh mesh = model.Meshes[0]; // Assuming the model has at least one mesh
+            vertices = new List<Vertex>();
+
+            for (int i = 0; i < mesh.Vertices.Count; i++)
+            {
+                Vector3D vertex = mesh.Vertices[i];
+
+                Vertex newVertex;
+                newVertex.Position = new Vector3(vertex.X, vertex.Z, -vertex.Y);
+
+                vertices.Add(newVertex);
+            }
+
+            Vertex[] vertexArray = vertices.ToArray();
             BufferDescription vertexBufferDesc = new BufferDescription()
             {
                 Usage = ResourceUsage.Default,
-                ByteWidth = sizeof(float) * 3 * vertices.Length,
+                ByteWidth = sizeof(float) * 3 * vertexArray.Length,
                 BindFlags = BindFlags.VertexBuffer,
                 CPUAccessFlags = CpuAccessFlags.None
             };
-            using DataStream dsVertex = DataStream.Create(vertices, true, true);
+            using DataStream dsVertex = DataStream.Create(vertexArray, true, true);
             vertexBuffer = device.CreateBuffer(vertexBufferDesc, dsVertex);
 
-            int[] indices = new int[]
+            indices = new List<uint>();
+            foreach (Face face in mesh.Faces)
             {
-                0, 1, 2,
-            };
+                indices.AddRange(face.Indices.Select(index => (uint)index));
+            }
 
+            uint[] indicesArray = indices.ToArray();
             BufferDescription indexBufferDesc = new BufferDescription
             {
                 Usage = ResourceUsage.Default,
-                ByteWidth = sizeof(uint) * indices.Length,
+                ByteWidth = sizeof(uint) * indicesArray.Length,
                 BindFlags = BindFlags.IndexBuffer,
                 CPUAccessFlags = CpuAccessFlags.None,
             };
-            using DataStream dsIndex = DataStream.Create(indices, true, true);
+            using DataStream dsIndex = DataStream.Create(indicesArray, true, true);
             indexBuffer = device.CreateBuffer(indexBufferDesc, dsIndex);
 
             InputElementDescription[] inputElements = new InputElementDescription[]
@@ -226,7 +260,7 @@ namespace D3DWinUI3
         {
             deviceContext.OMSetRenderTargets(renderTargetView);
             deviceContext.ClearRenderTargetView(renderTargetView, canvasColor);
-            deviceContext.DrawIndexed(3, 0, 0);
+            deviceContext.DrawIndexed(indices.Count, 0, 0); // Use the total number of indices
             swapChain.Present(1, PresentFlags.None);
         }
     }
