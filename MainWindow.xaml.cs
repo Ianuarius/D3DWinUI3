@@ -14,6 +14,7 @@ using Vortice.Direct3D11;
 using Vortice.Direct3D11.Debug;
 using Vortice.DXGI;
 using Vortice.Mathematics;
+using Matrix4x4 = System.Numerics.Matrix4x4;
 
 namespace D3DWinUI3
 {
@@ -35,9 +36,14 @@ namespace D3DWinUI3
         private ID3D11InputLayout inputLayout;
         private ID3D11Debug iD3D11Debug;
         private AssimpContext importer;
+        private ID3D11RasterizerState rasterizerState;
+        private ID3D11DepthStencilState depthStencilState;
 
         private Viewport viewport;
         private Color4 canvasColor;
+        private Matrix4x4 worldMatrix;
+        private Matrix4x4 projectionMatrix;
+        private Matrix4x4 viewMatrix;
         private List<Vertex> vertices;
         private List<uint> indices;
         private int stride;
@@ -235,6 +241,40 @@ namespace D3DWinUI3
                 new InputElementDescription("POSITION", 0, Format.R32G32B32_Float, 0, 0),
             };
             inputLayout = device.CreateInputLayout(inputElements, vertexShaderByteCode.Span);
+
+            RasterizerDescription rasterizerStateDescription = new RasterizerDescription(CullMode.Back, FillMode.Wireframe)
+            {
+                FrontCounterClockwise = true,
+                DepthBias = 0,
+                DepthBiasClamp = 0f,
+                SlopeScaledDepthBias = 0f,
+                DepthClipEnable = true,
+                ScissorEnable = false,
+                MultisampleEnable = true,
+                AntialiasedLineEnable = false
+            };
+            rasterizerState = device.CreateRasterizerState(rasterizerStateDescription);
+
+            DepthStencilDescription depthStencilDescription = new DepthStencilDescription(true, DepthWriteMask.All, ComparisonFunction.LessEqual)
+            {
+                StencilEnable = false,
+                StencilReadMask = byte.MaxValue,
+                StencilWriteMask = byte.MaxValue,
+                FrontFace = DepthStencilOperationDescription.Default,
+                BackFace = DepthStencilOperationDescription.Default
+            };
+            depthStencilState = device.CreateDepthStencilState(depthStencilDescription);
+
+            float aspectRatio = (float)SwapChainCanvas.Width / (float)SwapChainCanvas.Height;
+            float fov = 90.0f * (float)Math.PI / 180.0f;
+            float nearPlane = 0.1f;
+            float farPlane = 100.0f;
+            projectionMatrix = Matrix4x4.CreatePerspectiveFieldOfView(fov, aspectRatio, nearPlane, farPlane);
+
+            Vector3 cameraPosition = new Vector3(-1.0f, -1.0f, -5.0f);
+            Vector3 cameraTarget = new Vector3(0.0f, 0.0f, 0.0f);
+            Vector3 cameraUp = new Vector3(0.0f, 1.0f, 0.0f);
+            viewMatrix = Matrix4x4.CreateLookAt(cameraPosition, cameraTarget, cameraUp);
         }
 
         public void SetRenderState()
@@ -249,6 +289,11 @@ namespace D3DWinUI3
             deviceContext.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
 
             deviceContext.RSSetViewports(new Viewport[] { viewport });
+            deviceContext.RSSetState(rasterizerState);
+            rasterizerState.Dispose();
+
+            deviceContext.OMSetDepthStencilState(depthStencilState, 1);
+            depthStencilState.Dispose();
         }
 
         private void Timer_Tick(object sender, object e)
