@@ -1,3 +1,11 @@
+cbuffer ConstantBuffer : register(b0)
+{
+    row_major matrix World;
+    row_major matrix View;
+    row_major matrix Projection;
+    float padding;
+}
+
 struct VertexInputType
 {
     float3 position : POSITION;
@@ -8,10 +16,10 @@ struct PixelInputType
     float4 position : SV_POSITION;
 };
 
-PixelInputType VS(VertexInputType input)
+PixelInputType VS(float4 pos : POSITION)
 {
     PixelInputType output;
-    output.position = float4(input.position, 1.0);
+    output.position = mul(mul(mul(pos, World), View), Projection);
     return output;
 }
 

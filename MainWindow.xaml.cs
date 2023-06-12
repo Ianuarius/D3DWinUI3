@@ -14,30 +14,31 @@ using Vortice.Direct3D11;
 using Vortice.Direct3D11.Debug;
 using Vortice.DXGI;
 using Vortice.Mathematics;
+using Windows.ApplicationModel.VoiceCommands;
 using Matrix4x4 = System.Numerics.Matrix4x4;
 
 namespace D3DWinUI3
 {
-
     public sealed partial class MainWindow : Window
     {
-        private DispatcherTimer timer;
         private ID3D11Device device;
         private ID3D11DeviceContext deviceContext;
         private IDXGIDevice dxgiDevice;
+        private ID3D11Debug iD3D11Debug;
         private IDXGISwapChain1 swapChain;
         private ID3D11Texture2D backBuffer;
         private ID3D11RenderTargetView renderTargetView;
-        private Vortice.WinUI.ISwapChainPanelNative swapChainPanel;
         private ID3D11VertexShader vertexShader;
         private ID3D11PixelShader pixelShader;
-        private ID3D11Buffer vertexBuffer;
-        private ID3D11Buffer indexBuffer;
         private ID3D11InputLayout inputLayout;
-        private ID3D11Debug iD3D11Debug;
-        private AssimpContext importer;
         private ID3D11RasterizerState rasterizerState;
         private ID3D11DepthStencilState depthStencilState;
+        private ID3D11Buffer vertexBuffer;
+        private ID3D11Buffer indexBuffer;
+        private ID3D11Buffer constantBuffer;
+        private Vortice.WinUI.ISwapChainPanelNative swapChainPanel;
+        private DispatcherTimer timer;
+        private AssimpContext importer;
 
         private Viewport viewport;
         private Color4 canvasColor;
@@ -53,6 +54,14 @@ namespace D3DWinUI3
         public struct Vertex
         {
             public Vector3 Position;
+        }
+
+        [StructLayout(LayoutKind.Sequential, Pack = 16)]
+        struct ConstantBufferData
+        {
+            public Matrix4x4 World;
+            public Matrix4x4 View;
+            public Matrix4x4 Projection;
         }
 
         public MainWindow()
@@ -194,7 +203,6 @@ namespace D3DWinUI3
             vertexShader = device.CreateVertexShader(vertexShaderByteCode.Span);
             pixelShader = device.CreatePixelShader(pixelShaderByteCode.Span);
 
-
             Mesh mesh = model.Meshes[0]; // Assuming the model has at least one mesh
             vertices = new List<Vertex>();
 
@@ -271,34 +279,55 @@ namespace D3DWinUI3
             float farPlane = 100.0f;
             projectionMatrix = Matrix4x4.CreatePerspectiveFieldOfView(fov, aspectRatio, nearPlane, farPlane);
 
-            Vector3 cameraPosition = new Vector3(-1.0f, -1.0f, -5.0f);
+            Vector3 cameraPosition = new Vector3(0.0f, 0.2f, -2.5f);
             Vector3 cameraTarget = new Vector3(0.0f, 0.0f, 0.0f);
             Vector3 cameraUp = new Vector3(0.0f, 1.0f, 0.0f);
             viewMatrix = Matrix4x4.CreateLookAt(cameraPosition, cameraTarget, cameraUp);
+
+            worldMatrix = Matrix4x4.Identity;
+
+            var constantBufferDescription = new BufferDescription(Marshal.SizeOf<ConstantBufferData>(), BindFlags.ConstantBuffer);
+            constantBuffer = device.CreateBuffer(constantBufferDescription);
         }
 
         public void SetRenderState()
         {
-            deviceContext.VSSetShader(vertexShader, null, 0);
-            deviceContext.PSSetShader(pixelShader, null, 0);
-
-            deviceContext.IASetVertexBuffers(0, new[] { vertexBuffer }, new[] { stride }, new[] { offset });
-            deviceContext.IASetIndexBuffer(indexBuffer, Format.R32_UInt, 0);
-            deviceContext.IASetInputLayout(inputLayout);
-            inputLayout.Dispose();
-            deviceContext.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
-
             deviceContext.RSSetViewports(new Viewport[] { viewport });
             deviceContext.RSSetState(rasterizerState);
             rasterizerState.Dispose();
 
             deviceContext.OMSetDepthStencilState(depthStencilState, 1);
             depthStencilState.Dispose();
+
+            deviceContext.VSSetShader(vertexShader, null, 0);
+            deviceContext.PSSetShader(pixelShader, null, 0);
+
+            deviceContext.IASetVertexBuffers(0, new[] { vertexBuffer }, new[] { stride }, new[] { offset });
+            deviceContext.IASetIndexBuffer(indexBuffer, Format.R32_UInt, 0);
+            deviceContext.VSSetConstantBuffers(0, new[] { constantBuffer });
+
+            deviceContext.IASetInputLayout(inputLayout);
+            inputLayout.Dispose();
+            deviceContext.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
         }
 
         private void Timer_Tick(object sender, object e)
         {
+            Update();
             Draw();
+        }
+
+        private void Update()
+        {
+            float angle = 0.05f;  // Change this as needed
+            worldMatrix = worldMatrix * Matrix4x4.CreateRotationY(angle);
+
+            ConstantBufferData data = new ConstantBufferData();
+            data.World = worldMatrix;
+            data.View = viewMatrix;
+            data.Projection = projectionMatrix;
+
+            deviceContext.UpdateSubresource(data, constantBuffer);
         }
 
         private void Draw()
