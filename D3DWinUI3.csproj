@@ -14,7 +14,9 @@
   </PropertyGroup>
   <ItemGroup>
     <None Remove="Monkey.fbx" />
+    <None Remove="PixelShader.hlsl" />
     <None Remove="Shader.hlsl" />
+    <None Remove="VertexShader.hlsl" />
   </ItemGroup>
 
   <ItemGroup>
