@@ -37,7 +37,6 @@ namespace D3DWinUI3
         private ID3D11Buffer vertexBuffer;
         private ID3D11Buffer indexBuffer;
         private ID3D11Buffer constantBuffer;
-        private ID3D11SamplerState samplerState;
         private Vortice.WinUI.ISwapChainPanelNative swapChainPanel;
         private DispatcherTimer timer;
         private AssimpContext importer;
@@ -61,20 +60,11 @@ namespace D3DWinUI3
         }
 
         [StructLayout(LayoutKind.Sequential, Pack = 16)]
-        struct LightData
-        {
-            public Vector4 Position;
-            public Vector4 AmbientColor;
-            public Vector4 DiffuseColor;
-        }
-
-        [StructLayout(LayoutKind.Sequential, Pack = 16)]
         struct ConstantBufferData
         {
+            public Matrix4x4 WorldViewProjection;
             public Matrix4x4 World;
-            public Matrix4x4 View;
-            public Matrix4x4 Projection;
-            public LightData Light;
+            public Vector4 LightPosition;
         }
 
         public MainWindow()
@@ -109,7 +99,6 @@ namespace D3DWinUI3
             swapChainPanel.Dispose();
             depthStencilState.Dispose();
             depthStencilView.Dispose();
-            samplerState.Dispose();
             importer.Dispose();
             rasterizerState.Dispose();
 
@@ -217,6 +206,7 @@ namespace D3DWinUI3
             };
 
             depthStencilView = device.CreateDepthStencilView(depthBuffer, depthStencilViewDesc);
+            depthBuffer.Dispose();
 
             viewport = new Viewport
             {
@@ -266,15 +256,16 @@ namespace D3DWinUI3
 
         private void CreateShaders()
         {
-            string shaderFile = Path.Combine(AppContext.BaseDirectory, "Shader.hlsl");
+            string vertexShaderFile = Path.Combine(AppContext.BaseDirectory, "VertexShader.hlsl");
+            string pixelShaderFile = Path.Combine(AppContext.BaseDirectory, "PixelShader.hlsl");
 
             var vertexEntryPoint = "VS";
             var vertexProfile = "vs_5_0";
-            ReadOnlyMemory<byte> vertexShaderByteCode = Compiler.CompileFromFile(shaderFile, vertexEntryPoint, vertexProfile);
+            ReadOnlyMemory<byte> vertexShaderByteCode = Compiler.CompileFromFile(vertexShaderFile, vertexEntryPoint, vertexProfile);
 
             var pixelEntryPoint = "PS";
             var pixelProfile = "ps_5_0";
-            ReadOnlyMemory<byte> pixelShaderByteCode = Compiler.CompileFromFile(shaderFile, pixelEntryPoint, pixelProfile);
+            ReadOnlyMemory<byte> pixelShaderByteCode = Compiler.CompileFromFile(pixelShaderFile, pixelEntryPoint, pixelProfile);
 
             vertexShader = device.CreateVertexShader(vertexShaderByteCode.Span);
             pixelShader = device.CreatePixelShader(pixelShaderByteCode.Span);
@@ -282,6 +273,7 @@ namespace D3DWinUI3
             InputElementDescription[] inputElements = new InputElementDescription[]
             {
                 new InputElementDescription("POSITION", 0, Format.R32G32B32_Float, 0, 0),
+                new InputElementDescription("NORMAL", 0, Format.R32G32B32_Float, 12, 0)
             };
             inputLayout = device.CreateInputLayout(inputElements, vertexShaderByteCode.Span);
 
@@ -344,9 +336,6 @@ namespace D3DWinUI3
 
             var constantBufferDescription = new BufferDescription(Marshal.SizeOf<ConstantBufferData>(), BindFlags.ConstantBuffer);
             constantBuffer = device.CreateBuffer(constantBufferDescription);
-
-            SamplerDescription samplerDesc = new SamplerDescription(Filter.MinMagMipLinear, TextureAddressMode.Wrap, TextureAddressMode.Wrap, TextureAddressMode.Wrap, 0, 0, ComparisonFunction.Never, new Color4(0, 0, 0, 0));
-            samplerState = device.CreateSamplerState(samplerDesc);
         }
 
         public void SetRenderState()
@@ -368,6 +357,7 @@ namespace D3DWinUI3
 
             // Pixel Shader
             deviceContext.PSSetShader(pixelShader, null, 0);
+            deviceContext.PSSetConstantBuffer(0, constantBuffer);
 
             // Output Merger
             deviceContext.OMSetDepthStencilState(depthStencilState, 1);
@@ -381,17 +371,15 @@ namespace D3DWinUI3
 
         private void Update()
         {
+            lightPosition = new Vector3(lightX, lightY, lightZ);
             float angle = 0.05f;
             worldMatrix = worldMatrix * Matrix4x4.CreateRotationY(angle);
-            Vector3 lightPosition = new Vector3(0.0f, 1.0f, -5.0f);
+            Matrix4x4 worldViewProjectionMatrix = worldMatrix * (viewMatrix * projectionMatrix);
 
             ConstantBufferData data = new ConstantBufferData();
+            data.WorldViewProjection = worldViewProjectionMatrix;
             data.World = worldMatrix;
-            data.View = viewMatrix;
-            data.Projection = projectionMatrix;
-            data.Light.Position = new Vector4(lightPosition, 1);
-            data.Light.AmbientColor = new Vector4(0.1f, 0.1f, 0.1f, 1);
-            data.Light.DiffuseColor = new Vector4(0.7f, 0.7f, 0.7f, 1);
+            data.LightPosition = new Vector4(lightPosition, 1);
 
             deviceContext.UpdateSubresource(data, constantBuffer);
         }
@@ -403,6 +391,26 @@ namespace D3DWinUI3
             deviceContext.ClearRenderTargetView(renderTargetView, canvasColor);
             deviceContext.DrawIndexed(indices.Count, 0, 0);
             swapChain.Present(1, PresentFlags.None);
+        }
+
+        float lightX = 0.0f; // -10 right, 10 left 
+        float lightY = 0.0f; // -10 down, 10 up
+        float lightZ = 0.0f; // -10 near, 10 far
+        Vector3 lightPosition;
+
+        private void SliderX_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+        {
+            lightX = (float)e.NewValue;
+        }
+
+        private void SliderY_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+        {
+            lightY = (float)e.NewValue;
+        }
+
+        private void SliderZ_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+        {
+            lightZ = (float)e.NewValue;
         }
     }
 }

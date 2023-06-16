@@ -8,7 +8,19 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d" Closed="Window_Closed">
 
-    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
-        <SwapChainPanel x:Name="SwapChainCanvas" Width="500" Height="500" Loaded="SwapChainCanvas_Loaded"></SwapChainPanel>
-    </StackPanel>
+    <Grid Width="500">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <SwapChainPanel Grid.Row="0" x:Name="SwapChainCanvas" Width="500" Height="500" Loaded="SwapChainCanvas_Loaded"></SwapChainPanel>
+        <TextBlock Grid.Row="1" Text="X:" />
+        <TextBlock Grid.Row="2" Text="Y:" />
+        <TextBlock Grid.Row="3" Text="Z:" />
+        <Slider Grid.Row="1" Minimum="-10" Maximum="10" Width="450" ValueChanged="SliderX_ValueChanged" />
+        <Slider Grid.Row="2" Minimum="-10" Maximum="10" Width="450" ValueChanged="SliderY_ValueChanged" />
+        <Slider Grid.Row="3" Minimum="-10" Maximum="10" Width="450" ValueChanged="SliderZ_ValueChanged" />
+    </Grid>
 </Window>
