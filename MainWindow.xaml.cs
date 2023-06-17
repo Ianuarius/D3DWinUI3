@@ -1,5 +1,6 @@
 using Assimp;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using SharpGen.Runtime;
 using System;
 using System.Collections.Generic;
@@ -398,17 +399,17 @@ namespace D3DWinUI3
         float lightZ = 0.0f; // -10 near, 10 far
         Vector3 lightPosition;
 
-        private void SliderX_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+        private void SliderX_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
         {
             lightX = (float)e.NewValue;
         }
 
-        private void SliderY_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+        private void SliderY_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
         {
             lightY = (float)e.NewValue;
         }
 
-        private void SliderZ_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+        private void SliderZ_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
         {
             lightZ = (float)e.NewValue;
         }
