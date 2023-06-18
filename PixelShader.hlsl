@@ -2,21 +2,22 @@ cbuffer ConstantBuffer : register(b0)
 {
     float4x4 WorldViewProjection;
     float4x4 World;
-    float4 LightPosition;
+    float4 BrushColor;
+    float2 ClickPosition;
 }
+
+Texture2D BrushTexture : register(t0);
+SamplerState BrushSampler : register(s0);
 
 struct PixelInput
 {
     float4 position : SV_POSITION;
     float3 world : POSITION0;
-    float3 normal : NORMAL;
+    float2 texCoord : TEXCOORD;
 };
 
 float4 PS(PixelInput input) : SV_TARGET
 {
-    float3 normal = input.normal;
-    float3 lightDir = normalize(LightPosition.xyz - input.world.xyz);
-    float NdotL = max(0, dot(normal, lightDir));
-    float4 color = float4(NdotL, NdotL, NdotL, 1.0f);
-    return color;
+    float alpha = 1.0f - BrushTexture.Sample(BrushSampler, input.texCoord).r;
+    return BrushColor * alpha;
 }

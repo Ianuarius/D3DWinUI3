@@ -1,11 +1,10 @@
-using Assimp;
 using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Input;
 using SharpGen.Runtime;
 using System;
-using System.Collections.Generic;
+using System.Drawing;
+using System.Drawing.Imaging;
 using System.IO;
-using System.Linq;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using Vortice;
@@ -15,7 +14,6 @@ using Vortice.Direct3D11;
 using Vortice.Direct3D11.Debug;
 using Vortice.DXGI;
 using Vortice.Mathematics;
-using Windows.ApplicationModel.VoiceCommands;
 using Matrix4x4 = System.Numerics.Matrix4x4;
 
 namespace D3DWinUI3
@@ -40,24 +38,28 @@ namespace D3DWinUI3
         private ID3D11Buffer constantBuffer;
         private Vortice.WinUI.ISwapChainPanelNative swapChainPanel;
         private DispatcherTimer timer;
-        private AssimpContext importer;
+        private ID3D11ShaderResourceView brushSRV;
+        private ID3D11SamplerState samplerState;
 
         private Viewport viewport;
         private Color4 canvasColor;
+        private Color4 brushColor;
+        private Vertex[] vertexArray;
+        private uint[] indicesArray;
         private Matrix4x4 worldMatrix;
         private Matrix4x4 projectionMatrix;
         private Matrix4x4 viewMatrix;
-        private List<Vertex> vertices;
-        private List<uint> indices;
-        private Mesh mesh;
         private int stride;
         private int offset;
+        private float desiredWorldWidth;
+        private float desiredWorldHeight;
+        private Windows.Foundation.Point lastClickPoint;
 
         [StructLayout(LayoutKind.Sequential)]
         public struct Vertex
         {
             public Vector3 Position;
-            public Vector3 Normal;
+            public Vector2 UV;
         }
 
         [StructLayout(LayoutKind.Sequential, Pack = 16)]
@@ -65,7 +67,9 @@ namespace D3DWinUI3
         {
             public Matrix4x4 WorldViewProjection;
             public Matrix4x4 World;
-            public Vector4 LightPosition;
+            public Vector4 BrushColor;
+            public Vector2 ClickPosition;
+            public Vector2 padding;
         }
 
         public MainWindow()
@@ -100,8 +104,9 @@ namespace D3DWinUI3
             swapChainPanel.Dispose();
             depthStencilState.Dispose();
             depthStencilView.Dispose();
-            importer.Dispose();
             rasterizerState.Dispose();
+            brushSRV.Dispose();
+            samplerState.Dispose();
 
             // iD3D11Debug.ReportLiveDeviceObjects(ReportLiveDeviceObjectFlags.Detail | ReportLiveDeviceObjectFlags.IgnoreInternal);
             iD3D11Debug.Dispose();
@@ -110,6 +115,9 @@ namespace D3DWinUI3
         public void InitializeDirectX()
         {
             canvasColor = new Color4(1.0f, 1.0f, 1.0f, 1.0f);
+            brushColor = new Color4(1.0f, 0.0f, 0.0f, 1.0f);
+            desiredWorldWidth = 10.0f;
+            desiredWorldHeight = 10.0f * (float)SwapChainCanvas.Height / (float)SwapChainCanvas.Width;
 
             FeatureLevel[] featureLevels = new FeatureLevel[]
             {
@@ -142,7 +150,7 @@ namespace D3DWinUI3
         private void SwapChainCanvas_Loaded(object sender, RoutedEventArgs e)
         {
             CreateSwapChain();
-            LoadModels();
+            CreateResources();
             CreateShaders();
             CreateBuffers();
             SetRenderState();
@@ -189,8 +197,8 @@ namespace D3DWinUI3
                 Height = (int)SwapChainCanvas.Height,
                 MipLevels = 1,
                 ArraySize = 1,
-                Format = Format.D24_UNorm_S8_UInt,  // 24 bits for depth, 8 bits for stencil
-                SampleDescription = new SampleDescription(1, 0),  // Adjust as needed
+                Format = Format.D24_UNorm_S8_UInt,
+                SampleDescription = new SampleDescription(1, 0),
                 Usage = ResourceUsage.Default,
                 BindFlags = BindFlags.DepthStencil,
                 CPUAccessFlags = CpuAccessFlags.None,
@@ -220,32 +228,128 @@ namespace D3DWinUI3
             };
         }
 
-        private void LoadModels()
+        public static (byte[], int, int) LoadBitmapData(string filePath)
         {
-            importer = new AssimpContext();
-            string modelFile = Path.Combine(AppContext.BaseDirectory, "Monkey.fbx");
-            Scene model = importer.ImportFile(modelFile, PostProcessPreset.TargetRealTimeMaximumQuality);
+            Bitmap bitmap = new Bitmap(filePath);
+            Rectangle rect = new Rectangle(0, 0, bitmap.Width, bitmap.Height);
+            BitmapData bmpData = bitmap.LockBits(rect, ImageLockMode.ReadOnly, bitmap.PixelFormat);
 
-            mesh = model.Meshes[0];
-            vertices = new List<Vertex>();
+            int numBytes = bmpData.Stride * bitmap.Height;
+            byte[] byteValues = new byte[numBytes];
 
-            for (int i = 0; i < mesh.Vertices.Count; i++)
+            System.Runtime.InteropServices.Marshal.Copy(bmpData.Scan0, byteValues, 0, numBytes);
+
+            bitmap.UnlockBits(bmpData);
+
+            return (byteValues, bitmap.Width, bmpData.Stride);
+        }
+
+        private void CreateResources()
+        {
+            vertexArray = new Vertex[]
             {
-                Vector3D vertex = mesh.Vertices[i];
-                Vector3D normal = mesh.Normals[i];
+                new Vertex() { Position = new Vector3(-1.0f,  1.0f, 0.0f), UV = new Vector2(1.0f, 0.0f) },
+                new Vertex() { Position = new Vector3(1.0f,  1.0f, 0.0f), UV = new Vector2(0.0f, 0.0f) },
+                new Vertex() { Position = new Vector3(1.0f, -1.0f, 0.0f), UV = new Vector2(0.0f, 1.0f) },
+                new Vertex() { Position = new Vector3(-1.0f, -1.0f, 0.0f), UV = new Vector2(1.0f, 1.0f) }
+            };
 
-                Vertex newVertex;
-                newVertex.Position = new Vector3(vertex.X, vertex.Z, -vertex.Y);
-                newVertex.Normal = new Vector3(normal.X, normal.Z, -normal.Y);
+            indicesArray = new uint[]
+            {
+                0, 1, 2,
+                0, 2, 3
+            };
 
-                vertices.Add(newVertex);
+
+            string bitmapFile = Path.Combine(AppContext.BaseDirectory, "BrushRGBA.png");
+            (byte[] bitmapData, int bitmapWidth, int bitmapStride) = LoadBitmapData(bitmapFile);
+            int bitmapHeight = bitmapData.Length / bitmapStride;
+
+            IntPtr dataPointer = Marshal.AllocHGlobal(bitmapData.Length);
+            Marshal.Copy(bitmapData, 0, dataPointer, bitmapData.Length);
+            SubresourceData subresourceData = new SubresourceData(dataPointer, bitmapStride, bitmapData.Length);
+
+            Texture2DDescription brushTextureDesc = new Texture2DDescription()
+            {
+                Width = bitmapWidth,
+                Height = bitmapHeight,
+                MipLevels = 1,
+                ArraySize = 1,
+                Format = Format.R8G8B8A8_UNorm,
+                SampleDescription = new SampleDescription(1, 0),
+                Usage = ResourceUsage.Default,
+                BindFlags = BindFlags.ShaderResource,
+                CPUAccessFlags = CpuAccessFlags.None,
+                MiscFlags = ResourceOptionFlags.None
+            };
+
+            ID3D11Texture2D brushTexture = device.CreateTexture2D(brushTextureDesc, subresourceData);
+            Marshal.FreeHGlobal(dataPointer);
+
+            ShaderResourceViewDescription brushSRVDesc = new ShaderResourceViewDescription()
+            {
+                Format = brushTextureDesc.Format,
+                ViewDimension = ShaderResourceViewDimension.Texture2D,
+                Texture2D = new Texture2DShaderResourceView()
+                {
+                    MipLevels = 1,
+                    MostDetailedMip = 0
+                }
+            };
+
+            brushSRV = device.CreateShaderResourceView(brushTexture, brushSRVDesc);
+            brushTexture.Dispose();
+
+            SamplerDescription samplerDescription = new SamplerDescription()
+            {
+                Filter = Filter.MinMagMipLinear,
+                AddressU = TextureAddressMode.Clamp,
+                AddressV = TextureAddressMode.Clamp,
+                AddressW = TextureAddressMode.Clamp,
+                MipLODBias = 0,
+                MaxAnisotropy = 1,
+                ComparisonFunc = ComparisonFunction.Always,
+                BorderColor = new Color4(0, 0, 0, 0),
+                MinLOD = 0,
+                MaxLOD = float.MaxValue
+            };
+
+            samplerState = device.CreateSamplerState(samplerDescription);
+
+            BlendDescription blendDescription = new BlendDescription()
+            {
+                AlphaToCoverageEnable = false,
+                IndependentBlendEnable = false,
+            };
+
+            blendDescription.RenderTarget[0] = new RenderTargetBlendDescription
+            {
+                BlendEnable = true,
+                SourceBlend = Blend.One,
+                DestinationBlend = Blend.InverseSourceAlpha,
+                BlendOperation = BlendOperation.Add,
+                SourceBlendAlpha = Blend.One,
+                DestinationBlendAlpha = Blend.Zero,
+                BlendOperationAlpha = BlendOperation.Add,
+                RenderTargetWriteMask = ColorWriteEnable.All
+            };
+
+            ID3D11BlendState blendState = device.CreateBlendState(blendDescription);
+
+            float[] blendFactor = new float[] { 1.0f, 1.0f, 1.0f, 1.0f };
+            unsafe
+            {
+                fixed (float* ptr = blendFactor)
+                {
+                    deviceContext.OMSetBlendState(blendState, ptr, 0xffffffff);
+                }
             }
+            blendState.Dispose();
 
             float aspectRatio = (float)SwapChainCanvas.Width / (float)SwapChainCanvas.Height;
-            float fov = 90.0f * (float)Math.PI / 180.0f;
             float nearPlane = 0.1f;
             float farPlane = 100.0f;
-            projectionMatrix = Matrix4x4.CreatePerspectiveFieldOfView(fov, aspectRatio, nearPlane, farPlane);
+            projectionMatrix = Matrix4x4.CreateOrthographic(desiredWorldWidth, desiredWorldHeight, nearPlane, farPlane);
 
             Vector3 cameraPosition = new Vector3(0.0f, 0.2f, -2.5f);
             Vector3 cameraTarget = new Vector3(0.0f, 0.0f, 0.0f);
@@ -274,7 +378,7 @@ namespace D3DWinUI3
             InputElementDescription[] inputElements = new InputElementDescription[]
             {
                 new InputElementDescription("POSITION", 0, Format.R32G32B32_Float, 0, 0),
-                new InputElementDescription("NORMAL", 0, Format.R32G32B32_Float, 12, 0)
+                new InputElementDescription("TEXCOORD", 0, Format.R32G32_Float, 12, 0)
             };
             inputLayout = device.CreateInputLayout(inputElements, vertexShaderByteCode.Span);
 
@@ -306,7 +410,6 @@ namespace D3DWinUI3
         {
             unsafe
             {
-                Vertex[] vertexArray = vertices.ToArray();
                 BufferDescription vertexBufferDesc = new BufferDescription()
                 {
                     Usage = ResourceUsage.Default,
@@ -318,13 +421,6 @@ namespace D3DWinUI3
                 vertexBuffer = device.CreateBuffer(vertexBufferDesc, dsVertex);
             }
 
-            indices = new List<uint>();
-            foreach (Face face in mesh.Faces)
-            {
-                indices.AddRange(face.Indices.Select(index => (uint)index));
-            }
-
-            uint[] indicesArray = indices.ToArray();
             BufferDescription indexBufferDesc = new BufferDescription
             {
                 Usage = ResourceUsage.Default,
@@ -342,10 +438,10 @@ namespace D3DWinUI3
         public void SetRenderState()
         {
             // Input Assembler
-            deviceContext.IASetInputLayout(inputLayout);
             deviceContext.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
             deviceContext.IASetVertexBuffers(0, new[] { vertexBuffer }, new[] { stride }, new[] { offset });
             deviceContext.IASetIndexBuffer(indexBuffer, Format.R32_UInt, 0);
+            deviceContext.IASetInputLayout(inputLayout);
             inputLayout.Dispose();
 
             // Vertex Shader
@@ -359,6 +455,8 @@ namespace D3DWinUI3
             // Pixel Shader
             deviceContext.PSSetShader(pixelShader, null, 0);
             deviceContext.PSSetConstantBuffer(0, constantBuffer);
+            deviceContext.PSSetShaderResources(0, 1, new[] { brushSRV });
+            deviceContext.PSSetSamplers(0, new[] { samplerState });
 
             // Output Merger
             deviceContext.OMSetDepthStencilState(depthStencilState, 1);
@@ -372,16 +470,17 @@ namespace D3DWinUI3
 
         private void Update()
         {
-            lightPosition = new Vector3(lightX, lightY, lightZ);
-            float angle = 0.05f;
-            worldMatrix = worldMatrix * Matrix4x4.CreateRotationY(angle);
+            float inverse = -1.0f;
+            float worldWidthOffset = desiredWorldWidth / 2;
+            float worldHeightOffset = desiredWorldHeight / 2;
             Matrix4x4 worldViewProjectionMatrix = worldMatrix * (viewMatrix * projectionMatrix);
 
             ConstantBufferData data = new ConstantBufferData();
+            data.BrushColor = brushColor;
+            data.ClickPosition.X = inverse * ((float)lastClickPoint.X / (float)SwapChainCanvas.Width) * desiredWorldWidth + worldWidthOffset;
+            data.ClickPosition.Y = inverse * ((float)lastClickPoint.Y / (float)SwapChainCanvas.Height) * desiredWorldHeight + worldHeightOffset;
             data.WorldViewProjection = worldViewProjectionMatrix;
             data.World = worldMatrix;
-            data.LightPosition = new Vector4(lightPosition, 1);
-
             deviceContext.UpdateSubresource(data, constantBuffer);
         }
 
@@ -390,28 +489,13 @@ namespace D3DWinUI3
             deviceContext.ClearDepthStencilView(depthStencilView, DepthStencilClearFlags.Depth, 1.0f, 0);
             deviceContext.OMSetRenderTargets(renderTargetView, depthStencilView);
             deviceContext.ClearRenderTargetView(renderTargetView, canvasColor);
-            deviceContext.DrawIndexed(indices.Count, 0, 0);
+            deviceContext.DrawIndexed(indicesArray.Length, 0, 0);
             swapChain.Present(1, PresentFlags.None);
         }
 
-        float lightX = 0.0f; // -10 right, 10 left 
-        float lightY = 0.0f; // -10 down, 10 up
-        float lightZ = 0.0f; // -10 near, 10 far
-        Vector3 lightPosition;
-
-        private void SliderX_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
+        private void SwapChainCanvas_PointerPressed(object sender, PointerRoutedEventArgs e)
         {
-            lightX = (float)e.NewValue;
-        }
-
-        private void SliderY_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
-        {
-            lightY = (float)e.NewValue;
-        }
-
-        private void SliderZ_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
-        {
-            lightZ = (float)e.NewValue;
+            lastClickPoint = e.GetCurrentPoint(SwapChainCanvas).Position;
         }
     }
 }

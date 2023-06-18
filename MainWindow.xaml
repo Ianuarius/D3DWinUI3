@@ -15,12 +15,6 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
-        <SwapChainPanel Grid.Row="0" x:Name="SwapChainCanvas" Width="500" Height="500" Loaded="SwapChainCanvas_Loaded"></SwapChainPanel>
-        <TextBlock Grid.Row="1" Text="X:" />
-        <TextBlock Grid.Row="2" Text="Y:" />
-        <TextBlock Grid.Row="3" Text="Z:" />
-        <Slider Grid.Row="1" Minimum="-10" Maximum="10" Width="450" ValueChanged="SliderX_ValueChanged" />
-        <Slider Grid.Row="2" Minimum="-10" Maximum="10" Width="450" ValueChanged="SliderY_ValueChanged" />
-        <Slider Grid.Row="3" Minimum="-10" Maximum="10" Width="450" ValueChanged="SliderZ_ValueChanged" />
+        <SwapChainPanel Grid.Row="0" x:Name="SwapChainCanvas" Width="500" Height="500" Loaded="SwapChainCanvas_Loaded" PointerPressed="SwapChainCanvas_PointerPressed"></SwapChainPanel>
     </Grid>
 </Window>
