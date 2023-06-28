@@ -8,8 +8,10 @@ cbuffer ConstantBuffer : register(b0)
 
 struct VertexInput
 {
-    float3 position : POSITION;
-    float2 texCoord : TEXCOORD;
+    float3 position : POSITION0;
+    float2 texCoord : TEXCOORD0;
+    float2 instancePos : POSITION1;
+    float2 instanceScale : TEXCOORD1;
 };
 
 struct VertexOutput
@@ -21,12 +23,10 @@ struct VertexOutput
 
 VertexOutput VS(VertexInput input)
 {
-    float4 position = float4(input.position, 1.0f);
-    position.xy += ClickPosition;
-    
     VertexOutput output;
-    output.position = mul(WorldViewProjection, position);
-    output.world = mul(World, position).xyz;
+    float3 scaledPos = float3(input.position.x * input.instanceScale.x, input.position.y * input.instanceScale.y, input.position.z);
+    float4 worldPos = float4(scaledPos + float3(input.instancePos.x, input.instancePos.y, 0.0), 1.0);
+    output.position = mul(worldPos, WorldViewProjection);
     output.texCoord = input.texCoord;
     return output;
 }

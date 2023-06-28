@@ -39,6 +39,8 @@ namespace D3DWinUI3
         private ID3D11Buffer vertexBuffer;
         private ID3D11Buffer indexBuffer;
         private ID3D11Buffer constantBuffer;
+        private BufferDescription instanceBufferDescription;
+        private ID3D11Buffer instanceBuffer;
         private Vortice.WinUI.ISwapChainPanelNative swapChainPanel;
         private DispatcherTimer timer;
         private ID3D11ShaderResourceView brushSRV;
@@ -52,8 +54,6 @@ namespace D3DWinUI3
         private Matrix4x4 worldMatrix;
         private Matrix4x4 projectionMatrix;
         private Matrix4x4 viewMatrix;
-        private int stride;
-        private int offset;
         private float desiredWorldWidth;
         private float desiredWorldHeight;
 
@@ -69,6 +69,13 @@ namespace D3DWinUI3
         struct BrushStamp
         {
             public Point Position;
+        }
+
+        [StructLayout(LayoutKind.Sequential, Pack = 16, Size = 32)]
+        public struct InstanceData
+        {
+            public Vector2 Position;
+            public Vector2 Scale;
         }
 
         [StructLayout(LayoutKind.Sequential, Pack = 16)]
@@ -87,11 +94,6 @@ namespace D3DWinUI3
             timer = new DispatcherTimer();
             timer.Tick += Timer_Tick;
             timer.Interval = TimeSpan.FromMilliseconds(1000 / 60);
-            unsafe
-            {
-                stride = sizeof(Vertex);
-                offset = 0;
-            }
             InitializeDirectX();
         }
 
@@ -125,8 +127,8 @@ namespace D3DWinUI3
         {
             canvasColor = new Color4(1.0f, 1.0f, 1.0f, 1.0f);
             brushColor = new Color4(1.0f, 0.0f, 0.0f, 1.0f);
-            desiredWorldWidth = 10.0f;
-            desiredWorldHeight = 10.0f * (float)SwapChainCanvas.Height / (float)SwapChainCanvas.Width;
+            desiredWorldWidth = (float)SwapChainCanvas.Width;
+            desiredWorldHeight = (float)SwapChainCanvas.Height;
 
             FeatureLevel[] featureLevels = new FeatureLevel[]
             {
@@ -385,8 +387,10 @@ namespace D3DWinUI3
 
             InputElementDescription[] inputElements = new InputElementDescription[]
             {
-                new InputElementDescription("POSITION", 0, Format.R32G32B32_Float, 0, 0),
-                new InputElementDescription("TEXCOORD", 0, Format.R32G32_Float, 12, 0)
+                new InputElementDescription("POSITION", 0, Format.R32G32B32_Float, 0, 0, InputClassification.PerVertexData, 0),
+                new InputElementDescription("TEXCOORD", 0, Format.R32G32_Float, 12, 0, InputClassification.PerVertexData, 0),
+                new InputElementDescription("POSITION", 1, Format.R32G32_Float, 0, 1, InputClassification.PerInstanceData, 1),
+                new InputElementDescription("TEXCOORD", 1, Format.R32G32_Float, 8, 1, InputClassification.PerInstanceData, 1)
             };
             inputLayout = device.CreateInputLayout(inputElements, vertexShaderByteCode.Span);
 
@@ -442,14 +446,35 @@ namespace D3DWinUI3
             BufferDescription constantBufferDescription = new BufferDescription(Marshal.SizeOf<ConstantBufferData>(), BindFlags.ConstantBuffer);
             constantBuffer = device.CreateBuffer(constantBufferDescription);
 
+            int maxInstances = 20;
 
+            instanceBufferDescription = new BufferDescription()
+            {
+                ByteWidth = maxInstances * Marshal.SizeOf<InstanceData>(),
+                Usage = ResourceUsage.Dynamic,
+                BindFlags = BindFlags.VertexBuffer,
+                CPUAccessFlags = CpuAccessFlags.Write,
+                StructureByteStride = Marshal.SizeOf<InstanceData>()
+            };
+            instanceBuffer = device.CreateBuffer(instanceBufferDescription);
+        }
+
+        private void Timer_Tick(object sender, object e)
+        {
+            Update();
+            Draw();
         }
 
         public void SetRenderState()
         {
             // Input Assembler
-            deviceContext.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
-            deviceContext.IASetVertexBuffers(0, new[] { vertexBuffer }, new[] { stride }, new[] { offset });
+            deviceContext.IASetPrimitiveTopology(PrimitiveTopology.TriangleList); 
+
+            int vertexStride = Marshal.SizeOf<Vertex>();
+            int instanceStride = Marshal.SizeOf<InstanceData>();
+            int offset = 0;
+            deviceContext.IASetVertexBuffers(0, new[] { vertexBuffer, instanceBuffer }, new[] { vertexStride, instanceStride }, new[] { offset, offset });
+
             deviceContext.IASetIndexBuffer(indexBuffer, Format.R32_UInt, 0);
             deviceContext.IASetInputLayout(inputLayout);
             inputLayout.Dispose();
@@ -472,12 +497,6 @@ namespace D3DWinUI3
             deviceContext.OMSetDepthStencilState(depthStencilState, 1);
         }
 
-        private void Timer_Tick(object sender, object e)
-        {
-            Update();
-            Draw();
-        }
-
         private void Update()
         {
             Matrix4x4 worldViewProjectionMatrix = worldMatrix * (viewMatrix * projectionMatrix);
@@ -485,14 +504,35 @@ namespace D3DWinUI3
             ConstantBufferData data = new ConstantBufferData();
             data.BrushColor = brushColor;
 
-            if (brushStamps.Count != 0)
+            if (brushStamps.Count > 0)
             {
-                data.ClickPosition = ConvertMousePointTo3D(brushStamps.Last().Position);
+                MappedSubresource mappedResource = deviceContext.Map(instanceBuffer, 0, MapMode.WriteDiscard, Vortice.Direct3D11.MapFlags.None);
+                IntPtr dataPtr = mappedResource.DataPointer;
+                foreach (BrushStamp stamp in brushStamps)
+                {
+                    float scale = 100.0f;
+                    Vector2 pos = ConvertMousePointTo3D(stamp.Position);
+                    Vector2 scaleVector = new Vector2(scale, scale);
+                    InstanceData instanceData = new InstanceData { Position = pos, Scale = scaleVector };
+                    Marshal.StructureToPtr(instanceData, dataPtr, true);
+                    dataPtr += Marshal.SizeOf<InstanceData>();
+                }
+                deviceContext.Unmap(instanceBuffer, 0);
             }
 
             data.WorldViewProjection = worldViewProjectionMatrix;
             data.World = worldMatrix;
             deviceContext.UpdateSubresource(data, constantBuffer);
+        }
+
+        private void Draw()
+        {
+            deviceContext.ClearDepthStencilView(depthStencilView, DepthStencilClearFlags.Depth, 1.0f, 0);
+            deviceContext.OMSetRenderTargets(renderTargetView, depthStencilView);
+            deviceContext.ClearRenderTargetView(renderTargetView, canvasColor);
+            deviceContext.DrawIndexedInstanced(indicesArray.Length, brushStamps.Count, 0, 0, 0);
+
+            swapChain.Present(1, PresentFlags.None);
         }
 
         private Vector2 ConvertMousePointTo3D(Point mousePoint)
@@ -502,22 +542,12 @@ namespace D3DWinUI3
             return new Vector2(worldX, worldY);
         }
 
-        private void Draw()
-        {
-            deviceContext.ClearDepthStencilView(depthStencilView, DepthStencilClearFlags.Depth, 1.0f, 0);
-            deviceContext.OMSetRenderTargets(renderTargetView, depthStencilView);
-            deviceContext.ClearRenderTargetView(renderTargetView, canvasColor);
-            deviceContext.DrawIndexed(indicesArray.Length, 0, 0);
-            swapChain.Present(1, PresentFlags.None);
-        }
-
         private bool isDrawing = false;
 
         private void SwapChainCanvas_PointerPressed(object sender, PointerRoutedEventArgs e)
         {
             isDrawing = true;
         }
-
 
         private void SwapChainCanvas_PointerMoved(object sender, PointerRoutedEventArgs e)
         {
