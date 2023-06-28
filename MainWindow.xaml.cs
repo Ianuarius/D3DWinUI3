@@ -2,9 +2,11 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Input;
 using SharpGen.Runtime;
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
+using System.Linq;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using Vortice;
@@ -15,6 +17,7 @@ using Vortice.Direct3D11.Debug;
 using Vortice.DXGI;
 using Vortice.Mathematics;
 using Matrix4x4 = System.Numerics.Matrix4x4;
+using Point = Windows.Foundation.Point;
 
 namespace D3DWinUI3
 {
@@ -53,13 +56,19 @@ namespace D3DWinUI3
         private int offset;
         private float desiredWorldWidth;
         private float desiredWorldHeight;
-        private Windows.Foundation.Point lastClickPoint;
 
         [StructLayout(LayoutKind.Sequential)]
         public struct Vertex
         {
             public Vector3 Position;
             public Vector2 UV;
+        }
+
+        private float minDistance = 80;
+        private List<BrushStamp> brushStamps = new List<BrushStamp>();
+        struct BrushStamp
+        {
+            public Point Position;
         }
 
         [StructLayout(LayoutKind.Sequential, Pack = 16)]
@@ -248,10 +257,10 @@ namespace D3DWinUI3
         {
             vertexArray = new Vertex[]
             {
-                new Vertex() { Position = new Vector3(-1.0f,  1.0f, 0.0f), UV = new Vector2(1.0f, 0.0f) },
-                new Vertex() { Position = new Vector3(1.0f,  1.0f, 0.0f), UV = new Vector2(0.0f, 0.0f) },
-                new Vertex() { Position = new Vector3(1.0f, -1.0f, 0.0f), UV = new Vector2(0.0f, 1.0f) },
-                new Vertex() { Position = new Vector3(-1.0f, -1.0f, 0.0f), UV = new Vector2(1.0f, 1.0f) }
+                new Vertex() { Position = new Vector3(-1.0f,  1.0f, 0.0f), UV = new Vector2(0.0f, 0.0f) },
+                new Vertex() { Position = new Vector3(1.0f,  1.0f, 0.0f), UV = new Vector2(1.0f, 0.0f) },
+                new Vertex() { Position = new Vector3(1.0f, -1.0f, 0.0f), UV = new Vector2(1.0f, 1.0f) },
+                new Vertex() { Position = new Vector3(-1.0f, -1.0f, 0.0f), UV = new Vector2(0.0f, 1.0f) }
             };
 
             indicesArray = new uint[]
@@ -259,7 +268,6 @@ namespace D3DWinUI3
                 0, 1, 2,
                 0, 2, 3
             };
-
 
             string bitmapFile = Path.Combine(AppContext.BaseDirectory, "BrushRGBA.png");
             (byte[] bitmapData, int bitmapWidth, int bitmapStride) = LoadBitmapData(bitmapFile);
@@ -351,7 +359,7 @@ namespace D3DWinUI3
             float farPlane = 100.0f;
             projectionMatrix = Matrix4x4.CreateOrthographic(desiredWorldWidth, desiredWorldHeight, nearPlane, farPlane);
 
-            Vector3 cameraPosition = new Vector3(0.0f, 0.2f, -2.5f);
+            Vector3 cameraPosition = new Vector3(0.0f, 0.0f, 1.0f);
             Vector3 cameraTarget = new Vector3(0.0f, 0.0f, 0.0f);
             Vector3 cameraUp = new Vector3(0.0f, 1.0f, 0.0f);
             viewMatrix = Matrix4x4.CreateLookAt(cameraPosition, cameraTarget, cameraUp);
@@ -382,7 +390,7 @@ namespace D3DWinUI3
             };
             inputLayout = device.CreateInputLayout(inputElements, vertexShaderByteCode.Span);
 
-            RasterizerDescription rasterizerStateDescription = new RasterizerDescription(CullMode.Back, FillMode.Solid)
+            RasterizerDescription rasterizerStateDescription = new RasterizerDescription(CullMode.None, FillMode.Solid)
             {
                 FrontCounterClockwise = true,
                 DepthBias = 0,
@@ -431,8 +439,10 @@ namespace D3DWinUI3
             using DataStream dsIndex = DataStream.Create(indicesArray, true, true);
             indexBuffer = device.CreateBuffer(indexBufferDesc, dsIndex);
 
-            var constantBufferDescription = new BufferDescription(Marshal.SizeOf<ConstantBufferData>(), BindFlags.ConstantBuffer);
+            BufferDescription constantBufferDescription = new BufferDescription(Marshal.SizeOf<ConstantBufferData>(), BindFlags.ConstantBuffer);
             constantBuffer = device.CreateBuffer(constantBufferDescription);
+
+
         }
 
         public void SetRenderState()
@@ -470,18 +480,26 @@ namespace D3DWinUI3
 
         private void Update()
         {
-            float inverse = -1.0f;
-            float worldWidthOffset = desiredWorldWidth / 2;
-            float worldHeightOffset = desiredWorldHeight / 2;
             Matrix4x4 worldViewProjectionMatrix = worldMatrix * (viewMatrix * projectionMatrix);
 
             ConstantBufferData data = new ConstantBufferData();
             data.BrushColor = brushColor;
-            data.ClickPosition.X = inverse * ((float)lastClickPoint.X / (float)SwapChainCanvas.Width) * desiredWorldWidth + worldWidthOffset;
-            data.ClickPosition.Y = inverse * ((float)lastClickPoint.Y / (float)SwapChainCanvas.Height) * desiredWorldHeight + worldHeightOffset;
+
+            if (brushStamps.Count != 0)
+            {
+                data.ClickPosition = ConvertMousePointTo3D(brushStamps.Last().Position);
+            }
+
             data.WorldViewProjection = worldViewProjectionMatrix;
             data.World = worldMatrix;
             deviceContext.UpdateSubresource(data, constantBuffer);
+        }
+
+        private Vector2 ConvertMousePointTo3D(Point mousePoint)
+        {
+            float worldX = (float)((mousePoint.X / SwapChainCanvas.Width) * desiredWorldWidth - desiredWorldWidth / 2f);
+            float worldY = (float)(desiredWorldHeight / 2f - ((float)mousePoint.Y / SwapChainCanvas.Height) * desiredWorldHeight);
+            return new Vector2(worldX, worldY);
         }
 
         private void Draw()
@@ -493,9 +511,36 @@ namespace D3DWinUI3
             swapChain.Present(1, PresentFlags.None);
         }
 
+        private bool isDrawing = false;
+
         private void SwapChainCanvas_PointerPressed(object sender, PointerRoutedEventArgs e)
         {
-            lastClickPoint = e.GetCurrentPoint(SwapChainCanvas).Position;
+            isDrawing = true;
+        }
+
+
+        private void SwapChainCanvas_PointerMoved(object sender, PointerRoutedEventArgs e)
+        {
+            if (isDrawing)
+            {
+                Point currentPos = e.GetCurrentPoint(SwapChainCanvas).Position;
+                if (brushStamps.Count == 0 || Distance(brushStamps.Last().Position, currentPos) >= minDistance)
+                {
+                    brushStamps.Add(new BrushStamp { Position = currentPos });
+                }
+            }
+        }
+
+        private double Distance(Point a, Point b)
+        {
+            double dx = a.X - b.X;
+            double dy = a.Y - b.Y;
+            return Math.Sqrt(dx * dx + dy * dy);
+        }
+
+        private void SwapChainCanvas_PointerReleased(object sender, PointerRoutedEventArgs e)
+        {
+            isDrawing = false;
         }
     }
 }

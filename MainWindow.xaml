@@ -15,6 +15,11 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
-        <SwapChainPanel Grid.Row="0" x:Name="SwapChainCanvas" Width="500" Height="500" Loaded="SwapChainCanvas_Loaded" PointerPressed="SwapChainCanvas_PointerPressed"></SwapChainPanel>
+        <SwapChainPanel x:Name="SwapChainCanvas" 
+                        Width="500" Height="500" 
+                        Loaded="SwapChainCanvas_Loaded" 
+                        PointerPressed="SwapChainCanvas_PointerPressed" 
+                        PointerMoved="SwapChainCanvas_PointerMoved" 
+                        PointerReleased="SwapChainCanvas_PointerReleased" />
     </Grid>
 </Window>
