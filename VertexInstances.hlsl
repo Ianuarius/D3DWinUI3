@@ -24,9 +24,14 @@ struct VertexOutput
 VertexOutput VS(VertexInput input)
 {
     VertexOutput output;
-    float3 scaledPos = float3(input.position.x * input.instanceScale.x, input.position.y * input.instanceScale.y, input.position.z);
-    float4 worldPos = float4(scaledPos + float3(input.instancePos.x, input.instancePos.y, 0.0), 1.0);
-    output.position = mul(worldPos, WorldViewProjection);
+    float scaledX = input.position.x * input.instanceScale.x;
+    float scaledY = input.position.y * input.instanceScale.y;
+    float scaledZ = input.position.z;
+    float3 scaledPos = float3(scaledX, scaledY, scaledZ);
+    
+    float3 instPos = float3(input.instancePos.x, input.instancePos.y, 0.0);
+    float3 worldPos = scaledPos + instPos;
+    output.position = mul(float4(worldPos, 1.0), WorldViewProjection);
     output.texCoord = input.texCoord;
     return output;
 }

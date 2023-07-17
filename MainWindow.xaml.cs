@@ -21,23 +21,41 @@ using Point = Windows.Foundation.Point;
 
 namespace D3DWinUI3
 {
+    public class Layer
+    {
+        public ID3D11Texture2D Texture { get; set; }
+        public ID3D11RenderTargetView RenderTargetView { get; set; }
+        public ID3D11ShaderResourceView ShaderResourceView { get; set; }
+    }
+
     public sealed partial class MainWindow : Window
     {
         private ID3D11Device device;
         private ID3D11DeviceContext deviceContext;
-        private IDXGIDevice dxgiDevice;
         private ID3D11Debug iD3D11Debug;
+        private ID3D11RenderTargetView renderTargetView;
         private IDXGISwapChain1 swapChain;
         private ID3D11Texture2D backBuffer;
-        private ID3D11RenderTargetView renderTargetView;
-        private ID3D11VertexShader vertexShader;
-        private ID3D11PixelShader pixelShader;
-        private ID3D11InputLayout inputLayout;
+        private ID3D11Texture2D intermediateTexture1;
+        private ID3D11Texture2D intermediateTexture2;
+        private ID3D11RenderTargetView intermediateRTV1;
+        private ID3D11RenderTargetView intermediateRTV2;
+        private ID3D11ShaderResourceView intermediateSRV1;
+        private ID3D11ShaderResourceView intermediateSRV2;
+        private IDXGIDevice dxgiDevice;
+        private ID3D11VertexShader vertexInstances;
+        private ID3D11PixelShader pixelInstances;
+        private ID3D11VertexShader vertexMerger;
+        private ID3D11PixelShader pixelMerger;
+        private ID3D11InputLayout instancesInputLayout;
+        private ID3D11InputLayout mergerInputLayout;
         private ID3D11RasterizerState rasterizerState;
         private ID3D11DepthStencilState depthStencilState;
         private ID3D11DepthStencilView depthStencilView;
-        private ID3D11Buffer vertexBuffer;
-        private ID3D11Buffer indexBuffer;
+        private ID3D11Buffer instanceVertexBuffer;
+        private ID3D11Buffer instanceIndexBuffer;
+        private ID3D11Buffer fullscreenVertexBuffer;
+        private ID3D11Buffer fullscreenIndexBuffer;
         private ID3D11Buffer constantBuffer;
         private BufferDescription instanceBufferDescription;
         private ID3D11Buffer instanceBuffer;
@@ -47,15 +65,19 @@ namespace D3DWinUI3
         private ID3D11SamplerState samplerState;
 
         private Viewport viewport;
-        private Color4 canvasColor;
         private Color4 brushColor;
-        private Vertex[] vertexArray;
-        private uint[] indicesArray;
+        private Vertex[] instanceVertices;
+        private Vertex[] fullscreenVertices;
+        private uint[] quadIndices;
+        private uint[] fullscreenIndices;
         private Matrix4x4 worldMatrix;
         private Matrix4x4 projectionMatrix;
         private Matrix4x4 viewMatrix;
         private float desiredWorldWidth;
         private float desiredWorldHeight;
+        private List<Layer> layers = new List<Layer>();
+        private int activeLayer;
+        private Color4 colorTransparent = new Color4(0.0f, 0.0f, 0.0f, 0.0f);
 
         [StructLayout(LayoutKind.Sequential)]
         public struct Vertex
@@ -107,17 +129,36 @@ namespace D3DWinUI3
             swapChain.Dispose();
             backBuffer.Dispose();
             renderTargetView.Dispose();
-            vertexShader.Dispose();
-            pixelShader.Dispose();
-            vertexBuffer.Dispose();
-            indexBuffer.Dispose();
-            constantBuffer.Dispose();
             swapChainPanel.Dispose();
+
+            vertexInstances.Dispose();
+            pixelInstances.Dispose();
+            instanceVertexBuffer.Dispose();
+            instanceIndexBuffer.Dispose();
+            instancesInputLayout.Dispose();
+            vertexMerger.Dispose();
+            pixelMerger.Dispose();
+            fullscreenVertexBuffer.Dispose();
+            fullscreenIndexBuffer.Dispose();
+            mergerInputLayout.Dispose();
+            constantBuffer.Dispose();
+            instanceBuffer.Dispose();
+
             depthStencilState.Dispose();
             depthStencilView.Dispose();
             rasterizerState.Dispose();
+            intermediateRTV1.Dispose();
+            intermediateRTV2.Dispose();
+            intermediateTexture1.Dispose();
+            intermediateTexture2.Dispose();
+            intermediateSRV1.Dispose();
+            intermediateSRV2.Dispose();
+
             brushSRV.Dispose();
             samplerState.Dispose();
+            layers[activeLayer].ShaderResourceView.Dispose();
+            layers[activeLayer].RenderTargetView.Dispose();
+            layers[activeLayer].Texture.Dispose();
 
             // iD3D11Debug.ReportLiveDeviceObjects(ReportLiveDeviceObjectFlags.Detail | ReportLiveDeviceObjectFlags.IgnoreInternal);
             iD3D11Debug.Dispose();
@@ -125,7 +166,6 @@ namespace D3DWinUI3
 
         public void InitializeDirectX()
         {
-            canvasColor = new Color4(1.0f, 1.0f, 1.0f, 1.0f);
             brushColor = new Color4(1.0f, 0.0f, 0.0f, 1.0f);
             desiredWorldWidth = (float)SwapChainCanvas.Width;
             desiredWorldHeight = (float)SwapChainCanvas.Height;
@@ -202,6 +242,28 @@ namespace D3DWinUI3
             swapChainPanel.SetSwapChain(swapChain);
             dxgiSurface.Dispose();
 
+
+            Texture2DDescription intermediateTextureDescription = new Texture2DDescription()
+            {
+                Width = (int)SwapChainCanvas.Width,
+                Height = (int)SwapChainCanvas.Height,
+                MipLevels = 1,
+                ArraySize = 1,
+                Format = Format.B8G8R8A8_UNorm,
+                SampleDescription = new SampleDescription(1, 0),
+                Usage = ResourceUsage.Default,
+                BindFlags = BindFlags.RenderTarget | BindFlags.ShaderResource,
+                CPUAccessFlags = CpuAccessFlags.None,
+                MiscFlags = ResourceOptionFlags.None
+            };
+
+            intermediateTexture1 = device.CreateTexture2D(intermediateTextureDescription);
+            intermediateTexture2 = device.CreateTexture2D(intermediateTextureDescription);
+            intermediateRTV1 = device.CreateRenderTargetView(intermediateTexture1);
+            intermediateRTV2 = device.CreateRenderTargetView(intermediateTexture2);
+            intermediateSRV1 = device.CreateShaderResourceView(intermediateTexture1);
+            intermediateSRV2 = device.CreateShaderResourceView(intermediateTexture2);
+
             Texture2DDescription depthBufferDesc = new Texture2DDescription
             {
                 Width = (int)SwapChainCanvas.Width,
@@ -257,15 +319,29 @@ namespace D3DWinUI3
 
         private void CreateResources()
         {
-            vertexArray = new Vertex[]
+            instanceVertices = new Vertex[]
             {
                 new Vertex() { Position = new Vector3(-1.0f,  1.0f, 0.0f), UV = new Vector2(0.0f, 0.0f) },
-                new Vertex() { Position = new Vector3(1.0f,  1.0f, 0.0f), UV = new Vector2(1.0f, 0.0f) },
-                new Vertex() { Position = new Vector3(1.0f, -1.0f, 0.0f), UV = new Vector2(1.0f, 1.0f) },
+                new Vertex() { Position = new Vector3( 1.0f,  1.0f, 0.0f), UV = new Vector2(1.0f, 0.0f) },
+                new Vertex() { Position = new Vector3( 1.0f, -1.0f, 0.0f), UV = new Vector2(1.0f, 1.0f) },
                 new Vertex() { Position = new Vector3(-1.0f, -1.0f, 0.0f), UV = new Vector2(0.0f, 1.0f) }
             };
 
-            indicesArray = new uint[]
+            fullscreenVertices = new Vertex[]
+            {
+                new Vertex() { Position = new Vector3(-1.0f,  1.0f, 0.0f), UV = new Vector2(0.0f, 0.0f) },
+                new Vertex() { Position = new Vector3( 1.0f,  1.0f, 0.0f), UV = new Vector2(1.0f, 0.0f) },
+                new Vertex() { Position = new Vector3( 1.0f, -1.0f, 0.0f), UV = new Vector2(1.0f, 1.0f) },
+                new Vertex() { Position = new Vector3(-1.0f, -1.0f, 0.0f), UV = new Vector2(0.0f, 1.0f) }
+            };
+
+            quadIndices = new uint[]
+            {
+                0, 1, 2,
+                0, 2, 3
+            };
+
+            fullscreenIndices = new uint[]
             {
                 0, 1, 2,
                 0, 2, 3
@@ -367,32 +443,81 @@ namespace D3DWinUI3
             viewMatrix = Matrix4x4.CreateLookAt(cameraPosition, cameraTarget, cameraUp);
 
             worldMatrix = Matrix4x4.Identity;
+
+            CreateLayer();
+            activeLayer = 0;
+        }
+
+        public void CreateLayer()
+        {
+            Layer layer = new Layer();
+            Texture2DDescription layerTextureDescription = new Texture2DDescription()
+            {
+                Width = (int)SwapChainCanvas.Width,
+                Height = (int)SwapChainCanvas.Height,
+                MipLevels = 1,
+                ArraySize = 1,
+                Format = Format.B8G8R8A8_UNorm,
+                SampleDescription = new SampleDescription(1, 0),
+                Usage = ResourceUsage.Default,
+                BindFlags = BindFlags.RenderTarget | BindFlags.ShaderResource,
+                CPUAccessFlags = CpuAccessFlags.None,
+                MiscFlags = ResourceOptionFlags.None
+            };
+            layer.Texture = device.CreateTexture2D(layerTextureDescription);
+            layer.RenderTargetView = device.CreateRenderTargetView(layer.Texture);
+            ShaderResourceViewDescription shaderResourceViewDesc = new ShaderResourceViewDescription()
+            {
+                Format = layerTextureDescription.Format,
+                ViewDimension = ShaderResourceViewDimension.Texture2D,
+                Texture2D = new Texture2DShaderResourceView()
+                {
+                    MipLevels = 1,
+                    MostDetailedMip = 0
+                }
+            };
+            layer.ShaderResourceView = device.CreateShaderResourceView(layer.Texture, shaderResourceViewDesc);
+            layers.Add(layer);
         }
 
         private void CreateShaders()
         {
-            string vertexShaderFile = Path.Combine(AppContext.BaseDirectory, "VertexShader.hlsl");
-            string pixelShaderFile = Path.Combine(AppContext.BaseDirectory, "PixelShader.hlsl");
-
             var vertexEntryPoint = "VS";
             var vertexProfile = "vs_5_0";
-            ReadOnlyMemory<byte> vertexShaderByteCode = Compiler.CompileFromFile(vertexShaderFile, vertexEntryPoint, vertexProfile);
+            string vertexInstancesFile = Path.Combine(AppContext.BaseDirectory, "VertexInstances.hlsl");
+            string vertexMergerFile = Path.Combine(AppContext.BaseDirectory, "VertexMerger.hlsl");
 
             var pixelEntryPoint = "PS";
             var pixelProfile = "ps_5_0";
-            ReadOnlyMemory<byte> pixelShaderByteCode = Compiler.CompileFromFile(pixelShaderFile, pixelEntryPoint, pixelProfile);
+            string pixelInstancesFile = Path.Combine(AppContext.BaseDirectory, "PixelInstances.hlsl");
+            string pixelMergerFile = Path.Combine(AppContext.BaseDirectory, "PixelMerger.hlsl");
 
-            vertexShader = device.CreateVertexShader(vertexShaderByteCode.Span);
-            pixelShader = device.CreatePixelShader(pixelShaderByteCode.Span);
+            ReadOnlyMemory<byte> vertexInstancesByteCode = Compiler.CompileFromFile(vertexInstancesFile, vertexEntryPoint, vertexProfile);
+            ReadOnlyMemory<byte> pixelInstancesByteCode = Compiler.CompileFromFile(pixelInstancesFile, pixelEntryPoint, pixelProfile);
+            ReadOnlyMemory<byte> vertexMergerByteCode = Compiler.CompileFromFile(vertexMergerFile, vertexEntryPoint, vertexProfile);
+            ReadOnlyMemory<byte> pixelMergerByteCode = Compiler.CompileFromFile(pixelMergerFile, pixelEntryPoint, pixelProfile);
 
-            InputElementDescription[] inputElements = new InputElementDescription[]
+            vertexInstances = device.CreateVertexShader(vertexInstancesByteCode.Span);
+            pixelInstances = device.CreatePixelShader(pixelInstancesByteCode.Span);
+            vertexMerger = device.CreateVertexShader(vertexMergerByteCode.Span);
+            pixelMerger = device.CreatePixelShader(pixelMergerByteCode.Span);
+
+            InputElementDescription[] instancesInputElements = new InputElementDescription[]
             {
                 new InputElementDescription("POSITION", 0, Format.R32G32B32_Float, 0, 0, InputClassification.PerVertexData, 0),
                 new InputElementDescription("TEXCOORD", 0, Format.R32G32_Float, 12, 0, InputClassification.PerVertexData, 0),
                 new InputElementDescription("POSITION", 1, Format.R32G32_Float, 0, 1, InputClassification.PerInstanceData, 1),
                 new InputElementDescription("TEXCOORD", 1, Format.R32G32_Float, 8, 1, InputClassification.PerInstanceData, 1)
             };
-            inputLayout = device.CreateInputLayout(inputElements, vertexShaderByteCode.Span);
+
+            InputElementDescription[] mergerInputElements = new InputElementDescription[]
+            {
+                new InputElementDescription("POSITION", 0, Format.R32G32B32_Float, 0, 0, InputClassification.PerVertexData, 0),
+                new InputElementDescription("TEXCOORD", 0, Format.R32G32_Float, 12, 0, InputClassification.PerVertexData, 0),
+            };
+
+            instancesInputLayout = device.CreateInputLayout(instancesInputElements, vertexInstancesByteCode.Span);
+            mergerInputLayout = device.CreateInputLayout(mergerInputElements, vertexMergerByteCode.Span);
 
             RasterizerDescription rasterizerStateDescription = new RasterizerDescription(CullMode.None, FillMode.Solid)
             {
@@ -425,23 +550,46 @@ namespace D3DWinUI3
                 BufferDescription vertexBufferDesc = new BufferDescription()
                 {
                     Usage = ResourceUsage.Default,
-                    ByteWidth = sizeof(Vertex) * vertexArray.Length,
+                    ByteWidth = sizeof(Vertex) * instanceVertices.Length,
                     BindFlags = BindFlags.VertexBuffer,
                     CPUAccessFlags = CpuAccessFlags.None
                 };
-                using DataStream dsVertex = DataStream.Create(vertexArray, true, true);
-                vertexBuffer = device.CreateBuffer(vertexBufferDesc, dsVertex);
+                using DataStream dsVertex = DataStream.Create(instanceVertices, true, true);
+                instanceVertexBuffer = device.CreateBuffer(vertexBufferDesc, dsVertex);
+            }
+
+            unsafe
+            {
+                BufferDescription fullscreenQuadBufferDesc = new BufferDescription()
+                {
+                    Usage = ResourceUsage.Default,
+                    ByteWidth = sizeof(Vertex) * fullscreenVertices.Length,
+                    BindFlags = BindFlags.VertexBuffer,
+                    CPUAccessFlags = CpuAccessFlags.None
+                };
+                using DataStream dsVertex = DataStream.Create(fullscreenVertices, true, true);
+                fullscreenVertexBuffer = device.CreateBuffer(fullscreenQuadBufferDesc, dsVertex);
             }
 
             BufferDescription indexBufferDesc = new BufferDescription
             {
                 Usage = ResourceUsage.Default,
-                ByteWidth = sizeof(uint) * indicesArray.Length,
+                ByteWidth = sizeof(uint) * quadIndices.Length,
                 BindFlags = BindFlags.IndexBuffer,
                 CPUAccessFlags = CpuAccessFlags.None,
             };
-            using DataStream dsIndex = DataStream.Create(indicesArray, true, true);
-            indexBuffer = device.CreateBuffer(indexBufferDesc, dsIndex);
+            using DataStream dsIndex = DataStream.Create(quadIndices, true, true);
+            instanceIndexBuffer = device.CreateBuffer(indexBufferDesc, dsIndex);
+
+            BufferDescription fullscreenIndexBufferDesc = new BufferDescription
+            {
+                Usage = ResourceUsage.Default,
+                ByteWidth = sizeof(uint) * fullscreenIndices.Length,
+                BindFlags = BindFlags.IndexBuffer,
+                CPUAccessFlags = CpuAccessFlags.None,
+            };
+            using DataStream dsIndex2 = DataStream.Create(fullscreenIndices, true, true);
+            fullscreenIndexBuffer = device.CreateBuffer(fullscreenIndexBufferDesc, dsIndex2);
 
             BufferDescription constantBufferDescription = new BufferDescription(Marshal.SizeOf<ConstantBufferData>(), BindFlags.ConstantBuffer);
             constantBuffer = device.CreateBuffer(constantBufferDescription);
@@ -468,30 +616,17 @@ namespace D3DWinUI3
         public void SetRenderState()
         {
             // Input Assembler
-            deviceContext.IASetPrimitiveTopology(PrimitiveTopology.TriangleList); 
-
-            int vertexStride = Marshal.SizeOf<Vertex>();
-            int instanceStride = Marshal.SizeOf<InstanceData>();
-            int offset = 0;
-            deviceContext.IASetVertexBuffers(0, new[] { vertexBuffer, instanceBuffer }, new[] { vertexStride, instanceStride }, new[] { offset, offset });
-
-            deviceContext.IASetIndexBuffer(indexBuffer, Format.R32_UInt, 0);
-            deviceContext.IASetInputLayout(inputLayout);
-            inputLayout.Dispose();
+            deviceContext.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
 
             // Vertex Shader
-            deviceContext.VSSetShader(vertexShader, null, 0);
-            deviceContext.VSSetConstantBuffers(0, new[] { constantBuffer });
+            deviceContext.VSSetConstantBuffer(0, constantBuffer);
 
             // Rasterizer Stage
             deviceContext.RSSetViewports(new Viewport[] { viewport });
             deviceContext.RSSetState(rasterizerState);
 
-            // Pixel Shader
-            deviceContext.PSSetShader(pixelShader, null, 0);
+            // Pixel Shader	
             deviceContext.PSSetConstantBuffer(0, constantBuffer);
-            deviceContext.PSSetShaderResources(0, 1, new[] { brushSRV });
-            deviceContext.PSSetSamplers(0, new[] { samplerState });
 
             // Output Merger
             deviceContext.OMSetDepthStencilState(depthStencilState, 1);
@@ -527,11 +662,86 @@ namespace D3DWinUI3
 
         private void Draw()
         {
-            deviceContext.ClearDepthStencilView(depthStencilView, DepthStencilClearFlags.Depth, 1.0f, 0);
-            deviceContext.OMSetRenderTargets(renderTargetView, depthStencilView);
-            deviceContext.ClearRenderTargetView(renderTargetView, canvasColor);
-            deviceContext.DrawIndexedInstanced(indicesArray.Length, brushStamps.Count, 0, 0, 0);
+            // 1. Draw Instances to intermediateRTV1
+            deviceContext.VSSetShader(vertexInstances, null, 0);
+            deviceContext.PSSetShader(pixelInstances, null, 0);
+            deviceContext.IASetInputLayout(instancesInputLayout);
 
+            deviceContext.ClearRenderTargetView(intermediateRTV1, colorTransparent);
+            deviceContext.OMSetRenderTargets(intermediateRTV1, depthStencilView);
+
+            int vertexStride = Marshal.SizeOf<Vertex>();
+            int instanceStride = Marshal.SizeOf<InstanceData>();
+            int offset = 0;
+            deviceContext.IASetVertexBuffer(0, instanceVertexBuffer, vertexStride, offset);
+            deviceContext.IASetVertexBuffer(1, instanceBuffer, instanceStride, offset);
+            deviceContext.IASetIndexBuffer(instanceIndexBuffer, Format.R32_UInt, 0);
+
+            deviceContext.PSSetShaderResource(0, brushSRV);
+            deviceContext.PSSetSampler(0, samplerState);
+            deviceContext.DrawIndexedInstanced(quadIndices.Length, brushStamps.Count, 0, 0, 0);
+
+            // 2. Merge new instances with old layer texture
+            deviceContext.VSSetShader(vertexMerger, null, 0);
+            deviceContext.PSSetShader(pixelMerger, null, 0);
+            deviceContext.IASetInputLayout(mergerInputLayout);
+            deviceContext.IASetVertexBuffer(0, fullscreenVertexBuffer, vertexStride, 0);
+            deviceContext.IASetIndexBuffer(fullscreenIndexBuffer, Format.R32_UInt, 0);
+
+            deviceContext.PSSetShaderResource(0, null);
+            deviceContext.PSSetShaderResource(1, null);
+
+            deviceContext.OMSetRenderTargets(intermediateRTV2, depthStencilView);
+            deviceContext.PSSetShaderResource(0, layers[activeLayer].ShaderResourceView);
+            deviceContext.PSSetShaderResource(1, intermediateSRV1);
+            deviceContext.DrawIndexed(6, 0, 0);
+
+            // 3. Merge Layers together
+            for (int i = 0; i < layers.Count; i++)
+            {
+                deviceContext.PSSetShaderResource(0, null);
+                deviceContext.PSSetShaderResource(1, null);
+                if (i % 2 == 0)
+                {
+                    deviceContext.ClearRenderTargetView(intermediateRTV1, colorTransparent);
+                    deviceContext.OMSetRenderTargets(intermediateRTV1, depthStencilView);
+                    deviceContext.PSSetShaderResource(0, intermediateSRV2);
+                    deviceContext.PSSetShaderResource(1, layers[i].ShaderResourceView);
+                    deviceContext.DrawIndexed(6, 0, 0);
+                }
+                else
+                {
+                    deviceContext.ClearRenderTargetView(intermediateRTV2, colorTransparent);
+                    deviceContext.OMSetRenderTargets(intermediateRTV2, depthStencilView);
+                    deviceContext.PSSetShaderResource(0, intermediateSRV1);
+                    deviceContext.PSSetShaderResource(1, layers[i].ShaderResourceView);
+                    deviceContext.DrawIndexed(6, 0, 0);
+                }
+            }
+
+            // 4. Copy merged layers to backbuffer
+            if ((layers.Count - 1) % 2 == 0)
+            {
+                using (ID3D11Resource resource = renderTargetView.Resource)
+                {
+                    using (ID3D11Resource resource2 = intermediateRTV1.Resource)
+                    {
+                        deviceContext.CopyResource(resource, resource2);
+                    }
+                }
+            }
+            else
+            {
+                using (ID3D11Resource resource = renderTargetView.Resource)
+                {
+                    using (ID3D11Resource resource2 = intermediateRTV2.Resource)
+                    {
+                        deviceContext.CopyResource(resource, resource2);
+                    }
+                }
+            }
+
+            brushStamps.Clear();
             swapChain.Present(1, PresentFlags.None);
         }
 

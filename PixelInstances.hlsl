@@ -19,5 +19,5 @@ struct PixelInput
 float4 PS(PixelInput input) : SV_TARGET
 {
     float alpha = 1.0f - BrushTexture.Sample(BrushSampler, input.texCoord).r;
-    return BrushColor * alpha;
+    return float4(BrushColor.rgb * alpha, alpha);
 }

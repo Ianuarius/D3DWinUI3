@@ -15,8 +15,12 @@
   <ItemGroup>
     <None Remove="BrushRGBA.png" />
     <None Remove="Monkey.fbx" />
+    <None Remove="PixelInstances.hlsl" />
+    <None Remove="PixelMerger.hlsl" />
     <None Remove="PixelShader.hlsl" />
     <None Remove="Shader.hlsl" />
+    <None Remove="VertexInstances.hlsl" />
+    <None Remove="VertexMerger.hlsl" />
     <None Remove="VertexShader.hlsl" />
   </ItemGroup>
 
@@ -31,10 +35,16 @@
     <Content Include="BrushRGBA.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="PixelShader.hlsl">
+    <Content Include="PixelInstances.hlsl">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="VertexShader.hlsl">
+    <Content Include="PixelMerger.hlsl">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="VertexInstances.hlsl">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="VertexMerger.hlsl">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
