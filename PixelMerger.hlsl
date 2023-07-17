@@ -15,6 +15,6 @@ float4 PS(PixelInput input) : SV_TARGET
     float4 color1 = tex1.Sample(sam, uv);
     float4 color2 = tex2.Sample(sam, uv);
     
-    float4 finalColor = color2 * color2.a + color1 * (1 - color2.a);
+    float4 finalColor = color2 + color1 * (1 - color2.a);
     return finalColor;
 }

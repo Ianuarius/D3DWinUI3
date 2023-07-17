@@ -635,7 +635,6 @@ namespace D3DWinUI3
         private void Update()
         {
             Matrix4x4 worldViewProjectionMatrix = worldMatrix * (viewMatrix * projectionMatrix);
-
             ConstantBufferData data = new ConstantBufferData();
             data.BrushColor = brushColor;
 
@@ -654,7 +653,6 @@ namespace D3DWinUI3
                 }
                 deviceContext.Unmap(instanceBuffer, 0);
             }
-
             data.WorldViewProjection = worldViewProjectionMatrix;
             data.World = worldMatrix;
             deviceContext.UpdateSubresource(data, constantBuffer);
@@ -692,9 +690,22 @@ namespace D3DWinUI3
             deviceContext.PSSetShaderResource(1, null);
 
             deviceContext.OMSetRenderTargets(intermediateRTV2, depthStencilView);
-            deviceContext.PSSetShaderResource(0, layers[activeLayer].ShaderResourceView);
-            deviceContext.PSSetShaderResource(1, intermediateSRV1);
-            deviceContext.DrawIndexed(6, 0, 0);
+
+            if (brushStamps.Count > 0)
+            {
+                deviceContext.PSSetShaderResource(0, layers[activeLayer].ShaderResourceView);
+                deviceContext.PSSetShaderResource(1, intermediateSRV1);
+                deviceContext.DrawIndexed(6, 0, 0);
+
+                using (ID3D11Resource resource = layers[activeLayer].RenderTargetView.Resource)
+                {
+                    using (ID3D11Resource resource2 = intermediateRTV2.Resource)
+                    {
+                        deviceContext.CopyResource(resource, resource2);
+                    }
+                }
+                deviceContext.ClearRenderTargetView(intermediateRTV2, colorTransparent);
+            }
 
             // 3. Merge Layers together
             for (int i = 0; i < layers.Count; i++)
